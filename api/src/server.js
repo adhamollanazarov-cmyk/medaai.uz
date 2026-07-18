@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
+import fs from 'node:fs';
 import { config } from './config.js';
 import { pool, q } from './pool.js';
 import { matchSpecialty } from './matcher.js';
@@ -218,10 +219,40 @@ app.use('/app', express.static(path.join(config.paths.public, 'webapp')));
 app.use('/clinic', express.static(path.join(config.paths.public, 'dashboard')));
 app.get('/', (req, res) => res.redirect('/app'));
 
-export function startServer() {
+const SCHEMA_CANDIDATES = [
+  config.paths.schema,
+  path.resolve(config.paths.root, 'db', 'schema.sql'),
+  path.resolve(config.paths.root, '..', 'db', 'schema.sql'),
+];
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Apply the schema on boot (idempotent: CREATE TABLE IF NOT EXISTS), waiting for
+// the database to become reachable. Keeps everything in ONE long-running process.
+async function ensureSchema(retries = 12) {
+  for (let i = 1; i <= retries; i++) {
+    try { await pool.query('SELECT 1'); break; }
+    catch (e) {
+      const why = e.message || (Array.isArray(e.errors) && e.errors.map((x) => x.code || x.message).join('; ')) || e.code || String(e);
+      console.log(`waiting for database (${i}/${retries}) → ${why}`);
+      if (i === retries) throw e;
+      await sleep(3000);
+    }
+  }
+  const schemaPath = SCHEMA_CANDIDATES.find((p) => fs.existsSync(p));
+  if (schemaPath) {
+    await pool.query(fs.readFileSync(schemaPath, 'utf8'));
+    console.log(`schema ensured from ${schemaPath}`);
+  } else {
+    console.warn('schema.sql not found — skipping auto-migrate');
+  }
+}
+
+export async function startServer() {
+  await ensureSchema();
   return app.listen(config.port, () => {
     console.log(`meda.ai API → http://localhost:${config.port}  (app: /app, clinic: /clinic)`);
   });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) startServer();
+startServer().catch((e) => { console.error('startup failed:', e.message || e); process.exit(1); });
