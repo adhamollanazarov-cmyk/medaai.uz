@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://REPLACE-WITH-RAILWAY-API.up.railway.app/api/:path*" }
+  ],
+  "redirects": [
+    { "source": "/", "destination": "/webapp/", "permanent": false },
+    { "source": "/app", "destination": "/webapp/", "permanent": false },
+    { "source": "/clinic", "destination": "/dashboard/", "permanent": false }
+  ]
+}

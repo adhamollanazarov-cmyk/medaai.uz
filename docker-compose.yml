@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: medauz
+      POSTGRES_PASSWORD: medauz
+      POSTGRES_DB: medauz
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medauz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://medauz:medauz@db:5432/medauz
+      PORT: 3000
+      CLINIC_DASHBOARD_TOKEN: ${CLINIC_DASHBOARD_TOKEN:-clinic-demo-2026}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
+      LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+    command: sh -c "node src/migrate.js && node src/seed.js && node src/server.js"
+    ports:
+      - "3000:3000"
+
+  bot:
+    build: ./bot
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://medauz:medauz@db:5432/medauz
+      BOT_TOKEN: ${BOT_TOKEN}
+      PUBLIC_URL: ${PUBLIC_URL}
+      ADMIN_IDS: ${ADMIN_IDS}
+
+volumes:
+  pgdata:

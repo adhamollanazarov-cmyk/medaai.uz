@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>meda.ai — кабинет клиники</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="header">
+    <div class="brand">meda<span>.ai</span><small id="hdr-sub">кабинет клиники</small></div>
+    <div class="header-right">
+      <div class="lang-toggle">
+        <button data-lang="ru" class="active">RU</button>
+        <button data-lang="uz">UZ</button>
+      </div>
+      <select id="clinic-select" class="hidden"></select>
+      <button id="logout" class="btn ghost sm hidden">Выйти</button>
+    </div>
+  </div>
+
+  <!-- Login -->
+  <div id="login" class="login">
+    <h2 id="l-title">Вход в кабинет</h2>
+    <p id="l-sub">Введите код доступа клиники</p>
+    <label id="l-code-label">Код доступа</label>
+    <input type="password" id="token" placeholder="clinic-demo-2026" />
+    <label id="l-clinic-label">Клиника</label>
+    <select id="login-clinic"><option>—</option></select>
+    <div class="err" id="login-err"></div>
+    <div style="height:8px"></div>
+    <button class="btn" id="login-btn" style="width:100%">Войти</button>
+  </div>
+
+  <!-- Dashboard -->
+  <div id="dash" class="container hidden">
+    <div class="cards" id="stats"></div>
+
+    <div class="panel">
+      <h3 id="t-appts">Записи</h3>
+      <div style="overflow-x:auto"><table id="appts-table">
+        <thead><tr id="appts-head"></tr></thead>
+        <tbody id="appts-body"></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h3 id="t-slots">Добавить приёмное время</h3>
+      <div class="addslot">
+        <select id="slot-doctor"></select>
+        <input type="datetime-local" id="slot-dt" />
+        <button class="btn" id="add-slot">Добавить слот</button>
+        <span class="muted" id="slot-msg"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 id="t-doctors">Врачи</h3>
+      <div style="overflow-x:auto"><table id="doc-table">
+        <thead><tr id="doc-head"></tr></thead>
+        <tbody id="doc-body"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>meda.ai</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand">meda<span>.ai</span></div>
+      <div class="lang-toggle">
+        <button id="lng-ru" data-lang="ru">RU</button>
+        <button id="lng-uz" data-lang="uz">UZ</button>
+      </div>
+    </div>
+    <div id="view"></div>
+  </div>
+
+  <nav class="tabbar">
+    <button id="tab-find" data-tab="find"><span class="ic">🔍</span><span class="tl-find"></span></button>
+    <button id="tab-mine" data-tab="mine"><span class="ic">📅</span><span class="tl-mine"></span></button>
+  </nav>
+
+  <script src="i18n.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
