@@ -101,3 +101,17 @@ input:focus { border-color: var(--accent); }
   border-radius: 50%; display: inline-block; animation: spin .8s linear infinite; vertical-align: middle; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .muted { color: var(--hint); font-size: 14px; }
+
+/* ---------- AI consultation ---------- */
+.chat-log { display: flex; flex-direction: column; gap: 8px; margin: 12px 0;
+  max-height: 52vh; overflow-y: auto; padding-right: 2px; }
+.bubble { max-width: 84%; padding: 10px 13px; border-radius: var(--radius);
+  font-size: 15px; line-height: 1.45; word-wrap: break-word; box-shadow: var(--shadow); }
+.bubble.user { align-self: flex-end; background: var(--accent); color: #fff;
+  border-bottom-right-radius: 5px; }
+.bubble.assistant { align-self: flex-start; background: var(--card); color: var(--text);
+  border-bottom-left-radius: 5px; }
+.bubble.muted { color: var(--hint); }
+.chat-input { display: flex; gap: 8px; align-items: flex-end; }
+.chat-input textarea { flex: 1; margin: 0; resize: none; }
+.chat-input .btn { width: auto; padding: 12px 18px; }

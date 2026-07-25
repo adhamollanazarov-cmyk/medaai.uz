@@ -16,6 +16,7 @@ import config
 from i18n import t
 import db
 import analytics
+import ai
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("medauz-bot")
@@ -120,13 +121,71 @@ async def on_admin(m: Message):
     await m.answer(analytics.format_report(data, lang))
 
 
+# ---------- AI consultation ----------
+@dp.message(Command("chat"))
+async def on_chat(m: Message):
+    lang = await resolve_lang(m.from_user)
+    await db.ensure_patient(m.from_user.id, lang)
+    ai.start(m.from_user.id)
+    await m.answer(t(lang, "chat_start"))
+
+
+@dp.message(Command("stop"))
+async def on_stop(m: Message):
+    lang = await resolve_lang(m.from_user)
+    if ai.active(m.from_user.id):
+        ai.reset(m.from_user.id)
+        await m.answer(t(lang, "chat_stopped"))
+    else:
+        await m.answer(t(lang, "chat_not_active"))
+
+
+def _fmt_money(n) -> str:
+    return f"{int(n or 0):,}".replace(",", " ")
+
+
+async def _send_chat_result(m: Message, lang: str, data: dict):
+    """Show the recommendation + matching doctors, then hand off to the Mini App
+    for slot selection (booking lives there, not in chat)."""
+    await m.answer(t(lang, "chat_result", specialty=data.get("name") or ""))
+    doctors = data.get("doctors") or []
+    if not doctors:
+        await m.answer(t(lang, "chat_no_doctors"))
+        return
+    lines = [
+        t(lang, "chat_doctor",
+          name=d.get("name", ""), rating=d.get("rating", 0),
+          price=_fmt_money(d.get("priceUZS")),
+          clinic=(d.get("clinic") or {}).get("name", ""))
+        for d in doctors[:5]
+    ]
+    kb = app_kb(lang)
+    await m.answer("\n\n".join(lines) + "\n\n" + t(lang, "chat_book_hint"), reply_markup=kb)
+
+
 @dp.message(F.text & ~F.text.startswith("/"))
 async def on_text(m: Message):
     lang = await resolve_lang(m.from_user)
     await db.ensure_patient(m.from_user.id, lang)
+
+    # Inside an active consultation every message goes to the AI.
+    if ai.active(m.from_user.id):
+        await m.bot.send_chat_action(m.chat.id, "typing")
+        data = await ai.send(m.from_user.id, m.text, lang)
+        if data is None:
+            await m.answer(t(lang, "chat_error"))
+            return
+        if data.get("reply"):
+            await m.answer(data["reply"])
+        if data.get("done"):
+            await _send_chat_result(m, lang, data)
+        return
+
+    # Otherwise keep the original behaviour — open the Mini App — and mention /chat.
     kb = app_kb(lang)
     if kb:
-        await m.answer(t(lang, "welcome", name=name_suffix(m.from_user)), reply_markup=kb)
+        await m.answer(t(lang, "welcome", name=name_suffix(m.from_user)) + "\n\n"
+                       + t(lang, "chat_hint"), reply_markup=kb)
     else:
         await m.answer(t(lang, "no_public_url"))
 
@@ -154,6 +213,8 @@ async def reminders_loop(bot: Bot):
 async def on_startup(bot: Bot):
     await bot.set_my_commands([
         BotCommand(command="start", description="Открыть meda.ai / meda.ai ochish"),
+        BotCommand(command="chat", description="AI-консультация / AI-konsultatsiya"),
+        BotCommand(command="stop", description="Завершить консультацию / Konsultatsiyani yakunlash"),
         BotCommand(command="lang", description="Сменить язык / Tilni oʻzgartirish"),
         BotCommand(command="help", description="Помощь / Yordam"),
     ])

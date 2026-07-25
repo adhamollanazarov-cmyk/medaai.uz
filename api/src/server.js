@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import { config } from './config.js';
 import { pool, q } from './pool.js';
 import { matchSpecialty } from './matcher.js';
+import { chatReply, chatAvailable } from './chat.js';
 import { specialtyName } from './specialties.js';
 
 export const app = express();
@@ -78,6 +79,37 @@ app.post('/api/match', async (req, res) => {
   const { rows } = await q(`${DOCTOR_SELECT} WHERE d.specialty = $1 ORDER BY d.rating DESC`, [result.specialty]);
   res.json({ ...result, matchEventId: ev.rows[0].id, doctors: rows.map((r) => mapDoctor(r, lang)) });
 });
+
+// Multi-turn triage chat. The client keeps the transcript and posts it back each
+// turn (the API stays stateless). While `done` is false the assistant is still
+// asking questions; once it commits to a specialty we log a match_event and
+// return doctors in exactly the same shape as /api/match, so the Mini App can
+// hand off to the existing slots → booking flow with no extra code.
+app.post('/api/chat', async (req, res) => {
+  const { history, lang = 'ru', tgId = null } = req.body || {};
+  if (!Array.isArray(history) || !history.length) return res.status(400).json({ error: 'empty_history' });
+
+  let result;
+  try {
+    result = await chatReply(history, lang);
+  } catch (e) {
+    console.error('chat error:', e.message);
+    return res.status(500).json({ error: 'server' });
+  }
+
+  if (!result.specialty) return res.json({ ...result, matchEventId: null, doctors: [] });
+
+  const firstUser = history.find((m) => m && m.role === 'user')?.content || '';
+  const ev = await q(
+    `INSERT INTO match_events(tg_id, text, specialty, confidence, source, lang)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [tgId, String(firstUser).slice(0, 500), result.specialty, result.confidence, `chat-${result.source}`, lang]);
+  const { rows } = await q(`${DOCTOR_SELECT} WHERE d.specialty = $1 ORDER BY d.rating DESC`, [result.specialty]);
+  res.json({ ...result, matchEventId: ev.rows[0].id, doctors: rows.map((r) => mapDoctor(r, lang)) });
+});
+
+// Lets the Mini App hide the chat tab when no LLM key is configured.
+app.get('/api/chat/status', (req, res) => res.json({ llm: chatAvailable() }));
 
 app.get('/api/doctors', async (req, res) => {
   const { specialty = null, clinicId = null, lang = 'ru' } = req.query;

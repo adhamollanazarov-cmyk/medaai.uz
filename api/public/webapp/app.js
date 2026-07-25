@@ -12,6 +12,10 @@
     doctor: null,
     slot: null,
     appointment: null,
+    // AI consultation tab: full transcript is kept client-side and posted back
+    // each turn, so the API stays stateless.
+    chat: { messages: [], busy: false, result: null },
+    chatEnabled: false,
   };
   if (params.get('lang') === 'ru') state.lang = 'ru';
 
@@ -280,11 +284,93 @@
     else if (confirm(t.cancelConfirm)) go();
   }
 
+  // ---------- AI consultation ----------
+  function renderChat() {
+    const t = T(); const c = state.chat;
+    const bubbles = c.messages.map((m) => `
+      <div class="bubble ${m.role}">${escapeHtml(m.content).replace(/\n/g, '<br>')}</div>`).join('');
+    const docs = c.result && c.result.doctors && c.result.doctors.length
+      ? `<div class="section-title">${t.chatResult}: ${c.result.name}</div>
+         <div id="chatdocs">${c.result.doctors.map(doctorCardHTML).join('')}</div>`
+      : '';
+
+    view.innerHTML = `
+      <h1>${t.chatTitle}</h1>
+      <p class="subtitle">${c.messages.length ? t.chatDisclaimer : t.chatIntro}</p>
+      <div class="chat-log" id="chatlog">
+        ${bubbles}
+        ${c.busy ? `<div class="bubble assistant muted"><span class="spinner"></span> ${t.chatThinking}</div>` : ''}
+      </div>
+      ${docs}
+      ${c.result ? `<button class="btn ghost" id="chatrestart">${t.chatRestart}</button>` : `
+      <div class="chat-input">
+        <textarea id="chatmsg" rows="2" placeholder="${t.chatPlaceholder}" ${c.busy ? 'disabled' : ''}></textarea>
+        <button class="btn" id="chatsend" ${c.busy ? 'disabled' : ''}>${t.chatSend}</button>
+      </div>`}`;
+
+    const log = document.getElementById('chatlog');
+    if (log) log.scrollTop = log.scrollHeight;
+
+    const restart = document.getElementById('chatrestart');
+    if (restart) restart.addEventListener('click', () => {
+      state.chat = { messages: [], busy: false, result: null };
+      haptic(); renderChat();
+    });
+
+    const send = document.getElementById('chatsend');
+    const box = document.getElementById('chatmsg');
+    if (send && box) {
+      send.addEventListener('click', () => sendChat(box.value));
+      box.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(box.value); }
+      });
+      if (!c.busy) box.focus();
+    }
+
+    // Booking from the chat reuses the existing slots → booking flow: we just
+    // seed the "find" tab with the chat's recommendation and jump into it.
+    if (c.result) {
+      view.querySelectorAll('[data-book]').forEach((btn) =>
+        btn.addEventListener('click', () => {
+          state.match = c.result;
+          state.doctor = c.result.doctors.find((d) => String(d.id) === btn.dataset.book);
+          state.text = c.messages.find((m) => m.role === 'user')?.content || state.text;
+          state.slot = null;
+          state.screen = 'slots';
+          haptic();
+          switchTab('find');
+        }));
+    }
+  }
+
+  async function sendChat(raw) {
+    const t = T();
+    const text = String(raw || '').trim();
+    if (!text || state.chat.busy) return;
+    state.chat.messages.push({ role: 'user', content: text });
+    state.chat.busy = true;
+    haptic();
+    renderChat();
+    try {
+      const r = await api('/api/chat', { method: 'POST', body: {
+        history: state.chat.messages, lang: state.lang, tgId,
+      }});
+      state.chat.busy = false;
+      if (r.reply) state.chat.messages.push({ role: 'assistant', content: r.reply });
+      if (r.done && r.specialty) { state.chat.result = r; haptic('medium'); }
+    } catch {
+      state.chat.busy = false;
+      toast(t.errGeneric);
+    }
+    renderChat();
+  }
+
   // ---------- shell ----------
   function resetFind() { state.screen = 'input'; state.match = null; state.doctor = null; state.slot = null; }
 
   function render() {
     if (state.tab === 'mine') return renderMine();
+    if (state.tab === 'chat') return renderChat();
     switch (state.screen) {
       case 'match': return renderMatch();
       case 'slots': return renderSlots();
@@ -297,6 +383,7 @@
   function switchTab(tab) {
     state.tab = tab;
     document.getElementById('tab-find').classList.toggle('active', tab === 'find');
+    document.getElementById('tab-chat').classList.toggle('active', tab === 'chat');
     document.getElementById('tab-mine').classList.toggle('active', tab === 'mine');
     render();
   }
@@ -305,6 +392,7 @@
     const t = T();
     document.documentElement.lang = state.lang;
     document.querySelector('.tl-find').textContent = t.tabFind;
+    document.querySelector('.tl-chat').textContent = t.tabChat;
     document.querySelector('.tl-mine').textContent = t.tabMine;
     document.getElementById('lng-ru').classList.toggle('active', state.lang === 'ru');
     document.getElementById('lng-uz').classList.toggle('active', state.lang === 'uz');
@@ -317,7 +405,14 @@
   document.querySelectorAll('.lang-toggle button').forEach((b) =>
     b.addEventListener('click', () => { state.lang = b.dataset.lang; applyLang(); render(); }));
   document.getElementById('tab-find').addEventListener('click', () => { if (state.tab !== 'find') switchTab('find'); });
+  document.getElementById('tab-chat').addEventListener('click', () => { if (state.tab !== 'chat') switchTab('chat'); });
   document.getElementById('tab-mine').addEventListener('click', () => switchTab('mine'));
+
+  // The chat tab needs an LLM key to be useful — ask the API and reveal it only
+  // if one is configured. Rule-based /api/match keeps working either way.
+  api('/api/chat/status')
+    .then((s) => { state.chatEnabled = !!s.llm; if (s.llm) document.getElementById('tab-chat').hidden = false; })
+    .catch(() => {});
 
   applyLang();
   switchTab('find');
