@@ -204,30 +204,36 @@ app.get('/api/doctors/:id/photo', async (req, res) => {
 // ---------- patient profile (filled in via the bot) ----------
 app.get('/api/patients/:tgId', async (req, res) => {
   const { rows } = await q(
-    `SELECT tg_id, name, full_name, phone, lang, age_group, region, is_registered
+    `SELECT tg_id, name, full_name, phone, lang, lang_chosen, age_group, region, is_registered
      FROM patients WHERE tg_id = $1`, [String(req.params.tgId)]);
   if (!rows.length) return res.json({ registered: false });
   const p = rows[0];
   res.json({
     registered: p.is_registered === true,
     tgId: p.tg_id, name: p.name, fullName: p.full_name, phone: p.phone,
-    lang: p.lang, ageGroup: p.age_group, region: p.region,
+    lang: p.lang, langChosen: p.lang_chosen === true,
+    ageGroup: p.age_group, region: p.region,
   });
 });
 
 app.post('/api/patients/:tgId', async (req, res) => {
   const { fullName = null, ageGroup = null, region = null, phone = null, lang = 'ru' } = req.body || {};
+  // Язык переключили осознанно, только если он явно пришёл в теле запроса.
+  // Иначе значение по умолчанию перетирало бы выбор, сделанный в боте.
+  const langChosen = Object.prototype.hasOwnProperty.call(req.body || {}, 'lang');
   const { rows } = await q(
-    `INSERT INTO patients(tg_id, full_name, age_group, region, phone, lang, is_registered, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,TRUE,now())
+    `INSERT INTO patients(tg_id, full_name, age_group, region, phone, lang, lang_chosen, is_registered, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE,now())
      ON CONFLICT (tg_id) DO UPDATE SET
-       full_name = COALESCE($2, patients.full_name),
-       age_group = COALESCE($3, patients.age_group),
-       region    = COALESCE($4, patients.region),
-       phone     = COALESCE($5, patients.phone),
-       lang      = $6, is_registered = TRUE, updated_at = now()
-     RETURNING full_name, age_group, region, phone`,
-    [String(req.params.tgId), fullName, ageGroup, region, phone, lang]);
+       full_name   = COALESCE($2, patients.full_name),
+       age_group   = COALESCE($3, patients.age_group),
+       region      = COALESCE($4, patients.region),
+       phone       = COALESCE($5, patients.phone),
+       lang        = CASE WHEN $7 THEN $6 ELSE patients.lang END,
+       lang_chosen = patients.lang_chosen OR $7,
+       is_registered = TRUE, updated_at = now()
+     RETURNING full_name, age_group, region, phone, lang`,
+    [String(req.params.tgId), fullName, ageGroup, region, phone, lang, langChosen]);
   res.json({ ok: true, profile: rows[0] });
 });
 

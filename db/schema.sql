@@ -112,3 +112,9 @@ ALTER TABLE clinics ADD COLUMN IF NOT EXISTS name_uz TEXT;
 UPDATE clinics SET name_ru = COALESCE(name_ru, name),
                    name_uz = COALESCE(name_uz, name)
  WHERE name IS NOT NULL;
+
+-- ===== v5: язык выбран пользователем, а не подставлен по умолчанию =====
+-- Раньше ensure_patient() сразу писал lang='ru', и проверка «язык ещё не
+-- выбран» никогда не срабатывала: экран выбора не показывался никому.
+-- Отдельный флаг снимает эту двусмысленность.
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS lang_chosen BOOLEAN DEFAULT FALSE;

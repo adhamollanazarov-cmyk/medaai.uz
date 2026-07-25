@@ -22,7 +22,9 @@ def pool() -> asyncpg.Pool:
 
 # ---- users (patients) ----
 async def ensure_patient(tg_id: int, lang: str = "ru"):
-    # Register the Telegram user on first interaction (persisted in Postgres).
+    # Регистрируем пользователя при первом контакте.
+    # lang здесь — лишь запасной вариант для показа сообщений; НЕ считаем его
+    # выбором пользователя, иначе экран выбора языка никогда не появится.
     await pool().execute(
         """INSERT INTO patients(tg_id, lang) VALUES ($1, $2)
            ON CONFLICT (tg_id) DO NOTHING""",
@@ -35,10 +37,19 @@ async def get_lang(tg_id: int):
     return row["lang"] if row else None
 
 
+async def lang_chosen(tg_id: int) -> bool:
+    """Выбирал ли пользователь язык осознанно (а не получил значение по умолчанию)."""
+    row = await pool().fetchrow(
+        "SELECT lang_chosen FROM patients WHERE tg_id = $1", str(tg_id))
+    return bool(row and row["lang_chosen"])
+
+
 async def set_lang(tg_id: int, lang: str):
     await pool().execute(
-        """INSERT INTO patients(tg_id, lang, updated_at) VALUES ($1, $2, now())
-           ON CONFLICT (tg_id) DO UPDATE SET lang = $2, updated_at = now()""",
+        """INSERT INTO patients(tg_id, lang, lang_chosen, updated_at)
+           VALUES ($1, $2, TRUE, now())
+           ON CONFLICT (tg_id) DO UPDATE
+             SET lang = $2, lang_chosen = TRUE, updated_at = now()""",
         str(tg_id), lang,
     )
 

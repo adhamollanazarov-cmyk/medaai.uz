@@ -77,11 +77,12 @@ async def on_start(m: Message, state: FSMContext):
     await state.clear()
     # Язык спрашиваем явно: language_code в Telegram у многих узбекистанцев
     # стоит русский или английский, и угадывание ошибается.
-    saved = await db.get_lang(m.from_user.id)
-    if not saved:
+    # Проверяем флаг, а не сам lang: ensure_patient() подставляет 'ru' по
+    # умолчанию, и по наличию языка «выбирал / не выбирал» не отличить.
+    if not await db.lang_chosen(m.from_user.id):
         await m.answer(t(config.DEFAULT_LANG, "pick_lang"), reply_markup=kbd.lang_pick_kb())
         return
-    await _after_start(m, state, saved)
+    await _after_start(m, state, await db.get_lang(m.from_user.id) or config.DEFAULT_LANG)
 
 
 async def _after_start(m: Message, state: FSMContext, lang: str):
