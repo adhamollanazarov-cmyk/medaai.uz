@@ -19,6 +19,7 @@ import db
 import analytics
 import ai
 import ui
+import keyboards as kbd
 import api_client as api
 import handlers_profile
 import handlers_catalog
@@ -73,8 +74,17 @@ def name_suffix(user) -> str:
 # ---------- handlers ----------
 @dp.message(CommandStart())
 async def on_start(m: Message, state: FSMContext):
-    lang = await resolve_lang(m.from_user)
     await state.clear()
+    # Язык спрашиваем явно: language_code в Telegram у многих узбекистанцев
+    # стоит русский или английский, и угадывание ошибается.
+    saved = await db.get_lang(m.from_user.id)
+    if not saved:
+        await m.answer(t(config.DEFAULT_LANG, "pick_lang"), reply_markup=kbd.lang_pick_kb())
+        return
+    await _after_start(m, state, saved)
+
+
+async def _after_start(m: Message, state: FSMContext, lang: str):
     await db.ensure_patient(m.from_user.id, lang)
     await set_menu(m.bot, m.chat.id, lang)
     await m.answer(t(lang, "welcome", name=name_suffix(m.from_user)))
@@ -114,24 +124,25 @@ async def cb_chat(cq: CallbackQuery, state: FSMContext):
 @dp.message(Command("lang"))
 async def on_lang(m: Message):
     lang = await resolve_lang(m.from_user)
-    kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang:ru"),
-        InlineKeyboardButton(text="🇺🇿 Oʻzbek", callback_data="lang:uz"),
-    ]])
-    await m.answer(t(lang, "choose_lang"), reply_markup=kb)
+    await m.answer(t(lang, "choose_lang"), reply_markup=kbd.lang_pick_kb())
 
 
 @dp.callback_query(F.data.startswith("lang:"))
-async def on_lang_pick(cb: CallbackQuery):
+async def on_lang_pick(cb: CallbackQuery, state: FSMContext):
     lang = cb.data.split(":", 1)[1]
+    await db.ensure_patient(cb.from_user.id, lang)
     await db.set_lang(cb.from_user.id, lang)
+    # Язык един для бота и Mini App — сохраняем и в профиль.
+    await api.profile_set(cb.from_user.id, lang=lang)
     await cb.answer()
     await set_menu(cb.bot, cb.message.chat.id, lang)
-    kb = app_kb(lang)
-    if kb:
-        await cb.message.answer(t(lang, "lang_set"), reply_markup=kb)
-    else:
-        await cb.message.answer(t(lang, "lang_set"))
+    await cb.message.answer(t(lang, "lang_set"))
+
+    profile = await api.profile_get(cb.from_user.id)
+    if not (profile or {}).get("registered"):
+        await start_registration(cb, state, lang)
+        return
+    await ui.show_menu(cb, lang)
 
 
 @dp.message(Command("help"))

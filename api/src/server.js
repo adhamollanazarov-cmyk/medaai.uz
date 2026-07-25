@@ -26,14 +26,23 @@ for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
 
 const DOCTOR_SELECT = `
   SELECT d.id, d.name, d.specialty, d.experience_years, d.price_uzs, d.rating::float AS rating,
-         d.phone AS doctor_phone, d.description, d.photo_id, d.is_active,
-         c.id AS clinic_id, c.name AS clinic_name, c.address_ru, c.address_uz, c.phone,
+         d.phone AS doctor_phone, d.description_ru, d.description_uz, d.photo_id, d.is_active,
+         c.id AS clinic_id, c.name AS clinic_name, c.name_ru AS clinic_name_ru,
+         c.name_uz AS clinic_name_uz, c.address_ru, c.address_uz, c.phone,
          (SELECT min(s.datetime) FROM slots s WHERE s.doctor_id = d.id AND NOT s.is_booked AND s.datetime > now()) AS next_slot,
          (SELECT count(*) FROM slots s WHERE s.doctor_id = d.id AND NOT s.is_booked AND s.datetime > now()) AS free_slots
   FROM doctors d JOIN clinics c ON c.id = d.clinic_id`;
 
 // Patients must never see deactivated doctors; the clinic dashboard still does.
 const ACTIVE_ONLY = `d.is_active IS NOT FALSE`;
+
+// Значение на языке пациента с запасным вариантом: пустая карточка хуже,
+// чем карточка на втором языке.
+function pickLang(ru, uz, lang) {
+  const primary = lang === 'uz' ? uz : ru;
+  const fallback = lang === 'uz' ? ru : uz;
+  return primary || fallback || null;
+}
 
 function mapDoctor(r, lang = 'ru') {
   return {
@@ -45,14 +54,20 @@ function mapDoctor(r, lang = 'ru') {
     priceUZS: r.price_uzs,
     rating: r.rating,
     phone: r.doctor_phone || null,
-    description: r.description || null,
+    // Показываем описание на языке пациента; если его нет — берём второе,
+    // чтобы карточка не осталась пустой.
+    description: pickLang(r.description_ru, r.description_uz, lang),
+    descriptionRu: r.description_ru || null,
+    descriptionUz: r.description_uz || null,
     // photo_id is a Telegram file_id — useless in an <img>, so we hand the
     // Mini App a proxy URL instead (see GET /api/doctors/:id/photo).
     photoUrl: r.photo_id ? `/api/doctors/${r.id}/photo` : null,
     isActive: r.is_active !== false,
     clinic: {
-      id: r.clinic_id, name: r.clinic_name,
-      address: lang === 'uz' ? r.address_uz : r.address_ru, phone: r.phone,
+      id: r.clinic_id,
+      name: pickLang(r.clinic_name_ru, r.clinic_name_uz, lang) || r.clinic_name,
+      address: pickLang(r.address_ru, r.address_uz, lang),
+      phone: r.phone,
     },
     nextSlot: r.next_slot ? new Date(r.next_slot).toISOString() : null,
     freeSlots: Number(r.free_slots),
@@ -62,7 +77,8 @@ function mapDoctor(r, lang = 'ru') {
 const APPT_SELECT = `
   SELECT a.id, a.status, a.datetime, a.symptoms, a.patient_name, a.phone, a.created_at,
          d.name AS doctor, d.specialty, d.price_uzs,
-         c.name AS clinic_name, c.address_ru, c.address_uz, c.phone AS clinic_phone
+         c.name AS clinic_name, c.name_ru AS clinic_name_ru, c.name_uz AS clinic_name_uz,
+         c.address_ru, c.address_uz, c.phone AS clinic_phone
   FROM appointments a
   JOIN doctors d ON d.id = a.doctor_id
   JOIN clinics c ON c.id = d.clinic_id`;
@@ -74,7 +90,11 @@ function mapAppt(r, lang = 'ru') {
     symptoms: r.symptoms, patientName: r.patient_name, phone: r.phone,
     doctor: r.doctor, specialty: r.specialty,
     specialtyName: specialtyName(r.specialty, lang), priceUZS: r.price_uzs,
-    clinic: { name: r.clinic_name, address: lang === 'uz' ? r.address_uz : r.address_ru, phone: r.clinic_phone },
+    clinic: {
+      name: pickLang(r.clinic_name_ru, r.clinic_name_uz, lang) || r.clinic_name,
+      address: pickLang(r.address_ru, r.address_uz, lang),
+      phone: r.clinic_phone,
+    },
     createdAt: r.created_at,
   };
 }
@@ -272,8 +292,62 @@ function checkClinic(req, res, next) {
 }
 
 app.get('/api/clinic/clinics', checkClinic, async (req, res) => {
-  const { rows } = await q('SELECT id, name FROM clinics ORDER BY id');
-  res.json(rows);
+  const lang = req.query.lang || 'ru';
+  const { rows } = await q(
+    'SELECT id, name, name_ru, name_uz, address_ru, address_uz, phone FROM clinics ORDER BY id');
+  res.json(rows.map((r) => ({
+    id: r.id,
+    name: pickLang(r.name_ru, r.name_uz, lang) || r.name,
+    nameRu: r.name_ru, nameUz: r.name_uz,
+    address: pickLang(r.address_ru, r.address_uz, lang),
+    addressRu: r.address_ru, addressUz: r.address_uz,
+    phone: r.phone,
+  })));
+});
+
+// Клиники больше не приходят из сида — их заводит владелец через бота.
+app.post('/api/clinic/clinics', checkClinic, async (req, res) => {
+  const { nameRu = null, nameUz = null, addressRu = null,
+          addressUz = null, phone = null } = req.body || {};
+  if (!nameRu && !nameUz) return res.status(400).json({ error: 'name_required' });
+  // `name` — устаревшая одноязычная колонка, держим её заполненной ради
+  // старых запросов и NOT NULL-ограничения.
+  const { rows } = await q(
+    `INSERT INTO clinics(name, name_ru, name_uz, address_ru, address_uz, phone)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+    [nameRu || nameUz, nameRu, nameUz, addressRu, addressUz, phone]);
+  res.json({ ok: true, clinic: { id: rows[0].id, nameRu, nameUz } });
+});
+
+app.patch('/api/clinic/clinics/:id', checkClinic, async (req, res) => {
+  const map = { nameRu: 'name_ru', nameUz: 'name_uz', addressRu: 'address_ru',
+                addressUz: 'address_uz', phone: 'phone' };
+  const sets = []; const vals = [];
+  for (const [key, col] of Object.entries(map)) {
+    if (!(key in (req.body || {}))) continue;
+    vals.push(req.body[key]);
+    sets.push(`${col} = $${vals.length}`);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
+  if ('nameRu' in req.body && req.body.nameRu) {
+    vals.push(req.body.nameRu);
+    sets.push(`name = $${vals.length}`);
+  }
+  vals.push(Number(req.params.id));
+  const upd = await q(`UPDATE clinics SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING id`, vals);
+  if (!upd.rows.length) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
+});
+
+// Удалять клинику можно только пока к ней не привязаны врачи — иначе
+// каскад унёс бы врачей вместе с историей записей.
+app.delete('/api/clinic/clinics/:id', checkClinic, async (req, res) => {
+  const id = Number(req.params.id);
+  const used = await q('SELECT count(*)::int AS n FROM doctors WHERE clinic_id = $1', [id]);
+  if (used.rows[0].n > 0) return res.status(409).json({ error: 'clinic_has_doctors', doctors: used.rows[0].n });
+  const del = await q('DELETE FROM clinics WHERE id = $1 RETURNING id', [id]);
+  if (!del.rows.length) return res.status(404).json({ error: 'not_found' });
+  res.json({ ok: true });
 });
 
 app.get('/api/clinic/summary', checkClinic, async (req, res) => {
@@ -317,18 +391,18 @@ app.get('/api/clinic/doctors/all', checkClinic, async (req, res) => {
 });
 
 app.post('/api/clinic/doctors', checkClinic, async (req, res) => {
-  const { clinicId, name, specialty, experienceYears = 0, priceUZS = 0,
-          rating = 0, phone = null, description = null, photoId = null } = req.body || {};
+  const { clinicId, name, specialty, experienceYears = 0, priceUZS = 0, rating = 0,
+          phone = null, descriptionRu = null, descriptionUz = null, photoId = null } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'name_required' });
   if (!SPECIALTY_BY_CODE[specialty]) return res.status(400).json({ error: 'bad_specialty' });
   const cl = await q('SELECT id FROM clinics WHERE id = $1', [Number(clinicId)]);
   if (!cl.rows.length) return res.status(400).json({ error: 'bad_clinic' });
   const { rows } = await q(
     `INSERT INTO doctors(clinic_id, name, specialty, experience_years, price_uzs, rating,
-                         phone, description, photo_id, is_active)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id`,
+                         phone, description_ru, description_uz, photo_id, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE) RETURNING id`,
     [Number(clinicId), String(name).trim(), specialty, Number(experienceYears) || 0,
-     Number(priceUZS) || 0, Number(rating) || 0, phone, description, photoId]);
+     Number(priceUZS) || 0, Number(rating) || 0, phone, descriptionRu, descriptionUz, photoId]);
   const full = await q(`${DOCTOR_SELECT} WHERE d.id = $1`, [rows[0].id]);
   res.json({ ok: true, doctor: mapDoctor(full.rows[0], req.body.lang || 'ru') });
 });
@@ -338,7 +412,8 @@ app.patch('/api/clinic/doctors/:id', checkClinic, async (req, res) => {
   const map = {
     name: 'name', specialty: 'specialty', experienceYears: 'experience_years',
     priceUZS: 'price_uzs', rating: 'rating', phone: 'phone',
-    description: 'description', photoId: 'photo_id', isActive: 'is_active',
+    descriptionRu: 'description_ru', descriptionUz: 'description_uz',
+    photoId: 'photo_id', isActive: 'is_active',
     clinicId: 'clinic_id',
   };
   const sets = []; const vals = [];

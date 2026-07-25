@@ -27,6 +27,7 @@ services:
       LLM_API_KEY: ${LLM_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.openai.com/v1}
       LLM_MODEL: ${LLM_MODEL:-gpt-4o-mini}
+    # сид только пополняет справочник специальностей — безопасно при каждом старте
     command: sh -c "node src/seed.js && node src/server.js"
     ports:
       - "3000:3000"

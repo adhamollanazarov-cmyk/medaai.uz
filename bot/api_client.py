@@ -89,8 +89,20 @@ async def profile_set(tg_id: int, **fields):
 
 
 # ---------- админ ----------
-async def clinics():
-    return await _request("GET", "/api/clinic/clinics", admin=True) or []
+async def clinics(lang: str = "ru"):
+    return await _request("GET", f"/api/clinic/clinics?lang={lang}", admin=True) or []
+
+
+async def clinic_create(**fields):
+    return await _request("POST", "/api/clinic/clinics", admin=True, json=fields)
+
+
+async def clinic_update(clinic_id: int, **fields):
+    return await _request("PATCH", f"/api/clinic/clinics/{clinic_id}", admin=True, json=fields)
+
+
+async def clinic_delete(clinic_id: int):
+    return await _request("DELETE", f"/api/clinic/clinics/{clinic_id}", admin=True)
 
 
 async def doctors_all(lang: str = "ru"):

@@ -136,15 +136,38 @@ def admin_menu_kb(lang: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=t(lang, "btn_adm_add"), callback_data="adm:add")],
         [InlineKeyboardButton(text=t(lang, "btn_adm_list"), callback_data="adm:list")],
+        [InlineKeyboardButton(text=t(lang, "btn_adm_clinics"), callback_data="adm:clinics")],
         [InlineKeyboardButton(text=t(lang, "btn_adm_slots"), callback_data="adm:slots")],
         [InlineKeyboardButton(text=t(lang, "btn_adm_stats"), callback_data="adm:stats")],
         [InlineKeyboardButton(text=t(lang, "btn_menu"), callback_data="nav:menu")]])
 
 
 def clinics_kb(clinics: list, lang: str) -> InlineKeyboardMarkup:
+    """Выбор клиники при добавлении врача."""
     rows = [[InlineKeyboardButton(text=c["name"], callback_data=f"adm:clinic:{c['id']}")] for c in clinics]
     rows.append([InlineKeyboardButton(text=t(lang, "btn_cancel_action"), callback_data="adm:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def clinics_manage_kb(clinics: list, lang: str) -> InlineKeyboardMarkup:
+    """Управление клиниками: список + кнопка добавления."""
+    rows = [[InlineKeyboardButton(text=c["name"], callback_data=f"adm:cl:{c['id']}")] for c in clinics]
+    rows.append([InlineKeyboardButton(text=t(lang, "btn_adm_clinic_add"), callback_data="adm:cladd")])
+    rows.append([InlineKeyboardButton(text=t(lang, "btn_back"), callback_data="adm:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def clinic_card_kb(clinic_id: int, lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=t(lang, "adm_clinic_del"), callback_data=f"adm:cldel:{clinic_id}")],
+        [InlineKeyboardButton(text=t(lang, "btn_back"), callback_data="adm:clinics")]])
+
+
+def lang_pick_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang:ru"),
+        InlineKeyboardButton(text="🇺🇿 Oʻzbek", callback_data="lang:uz"),
+    ]])
 
 
 def admin_doctors_kb(docs: list, lang: str, action: str) -> InlineKeyboardMarkup:
@@ -170,7 +193,8 @@ def admin_doctor_kb(doc: dict, lang: str) -> InlineKeyboardMarkup:
 
 def admin_fields_kb(lang: str, doctor_id: int) -> InlineKeyboardMarkup:
     fields = [("name", "f_name"), ("spec", "f_spec"), ("exp", "f_exp"),
-              ("price", "f_price"), ("phone", "f_phone"), ("desc", "f_desc"), ("photo", "f_photo")]
+              ("price", "f_price"), ("phone", "f_phone"),
+              ("desc_ru", "f_desc_ru"), ("desc_uz", "f_desc_uz"), ("photo", "f_photo")]
     rows = _rows([InlineKeyboardButton(text=t(lang, key), callback_data=f"adm:field:{code}:{doctor_id}")
                   for code, key in fields], 2)
     rows.append([InlineKeyboardButton(text=t(lang, "btn_back"), callback_data=f"adm:pick:{doctor_id}")])

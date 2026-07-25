@@ -96,3 +96,19 @@ ALTER TABLE patients ADD COLUMN IF NOT EXISTS region        TEXT;
 ALTER TABLE patients ADD COLUMN IF NOT EXISTS is_registered BOOLEAN DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_doctors_active ON doctors(is_active, specialty);
+
+-- ===== v4: полная двуязычность справочных данных =====
+-- Специальности и адреса клиник уже были ru/uz. Не хватало описания врача
+-- и названия клиники — узбекоязычный пациент видел русский текст.
+
+ALTER TABLE doctors ADD COLUMN IF NOT EXISTS description_ru TEXT;
+ALTER TABLE doctors ADD COLUMN IF NOT EXISTS description_uz TEXT;
+-- Переносим то, что уже введено, в русское поле (данные не теряем).
+UPDATE doctors SET description_ru = description
+ WHERE description IS NOT NULL AND description_ru IS NULL;
+
+ALTER TABLE clinics ADD COLUMN IF NOT EXISTS name_ru TEXT;
+ALTER TABLE clinics ADD COLUMN IF NOT EXISTS name_uz TEXT;
+UPDATE clinics SET name_ru = COALESCE(name_ru, name),
+                   name_uz = COALESCE(name_uz, name)
+ WHERE name IS NOT NULL;

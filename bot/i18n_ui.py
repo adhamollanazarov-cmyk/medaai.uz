@@ -134,7 +134,6 @@ UI = {
         "f_exp": "Стаж",
         "f_price": "Цена",
         "f_phone": "Телефон",
-        "f_desc": "Описание",
         "f_photo": "Фото",
         "adm_ask_value": "Введите новое значение:",
         "adm_ask_slot": (
@@ -145,6 +144,33 @@ UI = {
         "adm_slot_past": "Это время уже прошло.",
         "adm_slot_added": "✅ Время {when} добавлено для {doctor}.",
         "api_error": "Сервис временно недоступен. Попробуйте позже.",
+
+        # --- выбор языка при первом запуске ---
+        "pick_lang": "Выберите язык / Tilni tanlang",
+
+        # --- клиники (админ) ---
+        "btn_adm_clinics": "🏥 Клиники",
+        "adm_clinics_title": "Клиники:",
+        "adm_no_clinics": (
+            "Клиник пока нет. Сначала добавьте клинику — врача нужно к чему-то привязать."
+        ),
+        "btn_adm_clinic_add": "➕ Добавить клинику",
+        "adm_clinic_ask_name_ru": "Название клиники по-русски:",
+        "adm_clinic_ask_name_uz": "Название клиники по-узбекски:",
+        "adm_clinic_ask_addr_ru": "Адрес по-русски (или пропустите):",
+        "adm_clinic_ask_addr_uz": "Адрес по-узбекски (или пропустите):",
+        "adm_clinic_ask_phone": "Телефон клиники (или пропустите):",
+        "adm_clinic_added": "✅ Клиника *{name}* добавлена.",
+        "adm_clinic_card": "*{name}*\n📍 {address}\n📞 {phone}\nВрачей: {doctors}",
+        "adm_clinic_del": "🗑 Удалить",
+        "adm_clinic_has_doctors": "Нельзя удалить: к клинике привязано врачей — {n}.",
+        "adm_clinic_deleted": "🗑 Клиника удалена.",
+
+        # --- два описания врача ---
+        "adm_ask_desc_ru": "Описание врача по-русски (или пропустите):",
+        "adm_ask_desc_uz": "Описание врача по-узбекски (или пропустите):",
+        "f_desc_ru": "Описание (RU)",
+        "f_desc_uz": "Описание (UZ)",
     },
 
     "uz": {
@@ -245,7 +271,6 @@ UI = {
         "f_exp": "Tajriba",
         "f_price": "Narx",
         "f_phone": "Telefon",
-        "f_desc": "Tavsif",
         "f_photo": "Rasm",
         "adm_ask_value": "Yangi qiymatni kiriting:",
         "adm_ask_slot": (
@@ -256,5 +281,30 @@ UI = {
         "adm_slot_past": "Bu vaqt allaqachon oʻtib ketgan.",
         "adm_slot_added": "✅ {when} vaqti {doctor} uchun qoʻshildi.",
         "api_error": "Xizmat vaqtincha ishlamayapti. Keyinroq urinib koʻring.",
+
+        "pick_lang": "Tilni tanlang / Выберите язык",
+
+        "btn_adm_clinics": "🏥 Klinikalar",
+        "adm_clinics_title": "Klinikalar:",
+        "adm_no_clinics": (
+            "Hozircha klinikalar yoʻq. Avval klinika qoʻshing — shifokorni biror joyga "
+            "bogʻlash kerak."
+        ),
+        "btn_adm_clinic_add": "➕ Klinika qoʻshish",
+        "adm_clinic_ask_name_ru": "Klinika nomi rus tilida:",
+        "adm_clinic_ask_name_uz": "Klinika nomi oʻzbek tilida:",
+        "adm_clinic_ask_addr_ru": "Manzil rus tilida (yoki oʻtkazib yuboring):",
+        "adm_clinic_ask_addr_uz": "Manzil oʻzbek tilida (yoki oʻtkazib yuboring):",
+        "adm_clinic_ask_phone": "Klinika telefoni (yoki oʻtkazib yuboring):",
+        "adm_clinic_added": "✅ *{name}* klinikasi qoʻshildi.",
+        "adm_clinic_card": "*{name}*\n📍 {address}\n📞 {phone}\nShifokorlar: {doctors}",
+        "adm_clinic_del": "🗑 Oʻchirish",
+        "adm_clinic_has_doctors": "Oʻchirib boʻlmaydi: klinikaga {n} ta shifokor bogʻlangan.",
+        "adm_clinic_deleted": "🗑 Klinika oʻchirildi.",
+
+        "adm_ask_desc_ru": "Shifokor tavsifi rus tilida (yoki oʻtkazib yuboring):",
+        "adm_ask_desc_uz": "Shifokor tavsifi oʻzbek tilida (yoki oʻtkazib yuboring):",
+        "f_desc_ru": "Tavsif (RU)",
+        "f_desc_uz": "Tavsif (UZ)",
     },
 }

@@ -414,8 +414,16 @@
   function escapeAttr(s) { return String(s).replace(/"/g, '&quot;'); }
 
   // ---------- init ----------
+  // Язык — общий для бота и Mini App: сохраняем выбор в профиль пациента,
+  // иначе человек выбирает узбекский здесь, а бот продолжает писать по-русски.
   document.querySelectorAll('.lang-toggle button').forEach((b) =>
-    b.addEventListener('click', () => { state.lang = b.dataset.lang; applyLang(); render(); }));
+    b.addEventListener('click', () => {
+      state.lang = b.dataset.lang;
+      applyLang(); render(); haptic();
+      api(`/api/patients/${encodeURIComponent(tgId)}`, {
+        method: 'POST', body: { lang: state.lang },
+      }).catch(() => {});
+    }));
   document.getElementById('tab-find').addEventListener('click', () => { if (state.tab !== 'find') switchTab('find'); });
   document.getElementById('tab-chat').addEventListener('click', () => { if (state.tab !== 'chat') switchTab('chat'); });
   document.getElementById('tab-mine').addEventListener('click', () => switchTab('mine'));
@@ -425,6 +433,16 @@
   api('/api/chat/status')
     .then((s) => { state.chatEnabled = !!s.llm; if (s.llm) document.getElementById('tab-chat').hidden = false; })
     .catch(() => {});
+
+  // Язык, выбранный ранее в боте, имеет приоритет над догадкой по language_code.
+  // Явный ?lang= в ссылке сильнее всего — им бот открывает нужную версию.
+  if (!params.get('lang')) {
+    api(`/api/patients/${encodeURIComponent(tgId)}`)
+      .then((p) => {
+        if (p && p.lang && p.lang !== state.lang) { state.lang = p.lang; applyLang(); render(); }
+      })
+      .catch(() => {});
+  }
 
   applyLang();
   switchTab('find');

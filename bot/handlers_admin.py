@@ -29,8 +29,17 @@ class AddDoctor(StatesGroup):
     experience = State()
     price = State()
     phone = State()
-    description = State()
+    description_ru = State()
+    description_uz = State()
     photo = State()
+
+
+class AddClinic(StatesGroup):
+    name_ru = State()
+    name_uz = State()
+    address_ru = State()
+    address_uz = State()
+    phone = State()
 
 
 class EditDoctor(StatesGroup):
@@ -74,10 +83,10 @@ async def cb_add(cb: CallbackQuery, state: FSMContext):
     if not _guard(cb.from_user.id):
         await cb.answer(t(lang, "not_admin"), show_alert=True)
         return
-    clinics = await api.clinics()
+    clinics = await api.clinics(lang)
     await cb.answer()
     if not clinics:
-        await ui.safe_edit(cb, t(lang, "api_error"), kb.back_menu(lang, "adm:menu"))
+        await ui.safe_edit(cb, t(lang, "adm_no_clinics"), kb.clinics_manage_kb([], lang))
         return
     await state.set_state(AddDoctor.clinic)
     await ui.safe_edit(cb, t(lang, "adm_choose_clinic"), kb.clinics_kb(clinics, lang))
@@ -151,18 +160,35 @@ async def cb_skip_phone(cb: CallbackQuery, state: FSMContext):
 
 
 async def _ask_desc(m: Message, state: FSMContext, lang: str):
-    await state.set_state(AddDoctor.description)
-    await m.answer(t(lang, "adm_ask_desc"), reply_markup=kb.skip_kb(lang, "adm:skip:desc"))
+    await state.set_state(AddDoctor.description_ru)
+    await m.answer(t(lang, "adm_ask_desc_ru"), reply_markup=kb.skip_kb(lang, "adm:skip:descru"))
 
 
-@router.message(AddDoctor.description)
-async def on_desc(m: Message, state: FSMContext):
-    await state.update_data(description=(m.text or "").strip())
+@router.message(AddDoctor.description_ru)
+async def on_desc_ru(m: Message, state: FSMContext):
+    await state.update_data(description_ru=(m.text or "").strip())
+    await _ask_desc_uz(m, state, await ui.resolve_lang(m.from_user))
+
+
+@router.callback_query(AddDoctor.description_ru, F.data == "adm:skip:descru")
+async def cb_skip_desc_ru(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await _ask_desc_uz(cb.message, state, await ui.resolve_lang(cb.from_user))
+
+
+async def _ask_desc_uz(m: Message, state: FSMContext, lang: str):
+    await state.set_state(AddDoctor.description_uz)
+    await m.answer(t(lang, "adm_ask_desc_uz"), reply_markup=kb.skip_kb(lang, "adm:skip:descuz"))
+
+
+@router.message(AddDoctor.description_uz)
+async def on_desc_uz(m: Message, state: FSMContext):
+    await state.update_data(description_uz=(m.text or "").strip())
     await _ask_photo(m, state, await ui.resolve_lang(m.from_user))
 
 
-@router.callback_query(AddDoctor.description, F.data == "adm:skip:desc")
-async def cb_skip_desc(cb: CallbackQuery, state: FSMContext):
+@router.callback_query(AddDoctor.description_uz, F.data == "adm:skip:descuz")
+async def cb_skip_desc_uz(cb: CallbackQuery, state: FSMContext):
     await cb.answer()
     await _ask_photo(cb.message, state, await ui.resolve_lang(cb.from_user))
 
@@ -192,7 +218,9 @@ async def _save_doctor(m: Message, user, state: FSMContext):
     res = await api.doctor_create(
         clinicId=d.get("clinic_id"), name=d.get("name"), specialty=d.get("specialty"),
         experienceYears=d.get("experience", 0), priceUZS=d.get("price", 0),
-        phone=d.get("phone") or None, description=d.get("description") or None,
+        phone=d.get("phone") or None,
+        descriptionRu=d.get("description_ru") or None,
+        descriptionUz=d.get("description_uz") or None,
         photoId=d.get("photo_id"), lang=lang)
     if not res:
         await m.answer(t(lang, "api_error"))
@@ -264,7 +292,8 @@ async def cb_restore(cb: CallbackQuery):
 
 # ---------- редактирование ----------
 FIELD_MAP = {"name": "name", "spec": "specialty", "exp": "experienceYears",
-             "price": "priceUZS", "phone": "phone", "desc": "description", "photo": "photoId"}
+             "price": "priceUZS", "phone": "phone",
+             "desc_ru": "descriptionRu", "desc_uz": "descriptionUz", "photo": "photoId"}
 
 
 @router.callback_query(F.data.startswith("adm:edit:"))
@@ -278,7 +307,7 @@ async def cb_edit(cb: CallbackQuery):
 @router.callback_query(F.data.startswith("adm:field:"))
 async def cb_field(cb: CallbackQuery, state: FSMContext):
     lang = await ui.resolve_lang(cb.from_user)
-    _, _, code, doc_id = cb.data.split(":")
+    _, _, code, doc_id = cb.data.split(":", 3)
     await state.update_data(edit_doc=int(doc_id), edit_field=code)
     await cb.answer()
     if code == "spec":
@@ -329,6 +358,154 @@ async def _apply_edit(m: Message, state: FSMContext, value):
     field = FIELD_MAP.get(data.get("edit_field"))
     res = await api.doctor_update(data["edit_doc"], **{field: value})
     await m.answer(t(lang, "adm_updated") if res else t(lang, "api_error"),
+                   reply_markup=kb.admin_menu_kb(lang))
+
+
+# ---------- клиники ----------
+# Клиники больше не приходят из сида: без них врача некуда привязать,
+# поэтому заводить их можно прямо здесь.
+async def _render_clinics(cb: CallbackQuery, lang: str):
+    clinics = await api.clinics(lang)
+    text = t(lang, "adm_clinics_title") if clinics else t(lang, "adm_no_clinics")
+    await ui.safe_edit(cb, text, kb.clinics_manage_kb(clinics, lang))
+
+
+@router.callback_query(F.data == "adm:clinics")
+async def cb_clinics(cb: CallbackQuery, state: FSMContext):
+    lang = await ui.resolve_lang(cb.from_user)
+    if not _guard(cb.from_user.id):
+        await cb.answer(t(lang, "not_admin"), show_alert=True)
+        return
+    await state.clear()
+    await cb.answer()
+    await _render_clinics(cb, lang)
+
+
+@router.callback_query(F.data.startswith("adm:cl:"))
+async def cb_clinic_card(cb: CallbackQuery):
+    lang = await ui.resolve_lang(cb.from_user)
+    cid = int(cb.data.split(":")[2])
+    clinics = await api.clinics(lang)
+    c = next((x for x in clinics if x["id"] == cid), None)
+    await cb.answer()
+    if not c:
+        await _render_clinics(cb, lang)
+        return
+    docs = [d for d in await api.doctors_all(lang) if (d.get("clinic") or {}).get("id") == cid]
+    await ui.safe_edit(cb, t(lang, "adm_clinic_card", name=c["name"],
+                             address=c.get("address") or t(lang, "not_set"),
+                             phone=c.get("phone") or t(lang, "not_set"),
+                             doctors=len(docs)),
+                       kb.clinic_card_kb(cid, lang))
+
+
+@router.callback_query(F.data.startswith("adm:cldel:"))
+async def cb_clinic_delete(cb: CallbackQuery):
+    lang = await ui.resolve_lang(cb.from_user)
+    if not _guard(cb.from_user.id):
+        await cb.answer(t(lang, "not_admin"), show_alert=True)
+        return
+    res = await api.clinic_delete(int(cb.data.split(":")[2]))
+    if res is None:
+        # чаще всего — 409: к клинике привязаны врачи
+        n = len([d for d in await api.doctors_all(lang)
+                 if (d.get("clinic") or {}).get("id") == int(cb.data.split(":")[2])])
+        await cb.answer(t(lang, "adm_clinic_has_doctors", n=n), show_alert=True)
+        return
+    await cb.answer(t(lang, "adm_clinic_deleted"), show_alert=True)
+    await _render_clinics(cb, lang)
+
+
+@router.callback_query(F.data == "adm:cladd")
+async def cb_clinic_add(cb: CallbackQuery, state: FSMContext):
+    lang = await ui.resolve_lang(cb.from_user)
+    if not _guard(cb.from_user.id):
+        await cb.answer(t(lang, "not_admin"), show_alert=True)
+        return
+    await state.set_state(AddClinic.name_ru)
+    await cb.answer()
+    await ui.safe_edit(cb, t(lang, "adm_clinic_ask_name_ru"))
+
+
+@router.message(AddClinic.name_ru)
+async def on_clinic_name_ru(m: Message, state: FSMContext):
+    lang = await ui.resolve_lang(m.from_user)
+    name = (m.text or "").strip()
+    if len(name) < 2:
+        await m.answer(t(lang, "name_too_short"))
+        return
+    await state.update_data(name_ru=name)
+    await state.set_state(AddClinic.name_uz)
+    await m.answer(t(lang, "adm_clinic_ask_name_uz"))
+
+
+@router.message(AddClinic.name_uz)
+async def on_clinic_name_uz(m: Message, state: FSMContext):
+    lang = await ui.resolve_lang(m.from_user)
+    await state.update_data(name_uz=(m.text or "").strip())
+    await state.set_state(AddClinic.address_ru)
+    await m.answer(t(lang, "adm_clinic_ask_addr_ru"), reply_markup=kb.skip_kb(lang, "adm:clskip:addrru"))
+
+
+@router.message(AddClinic.address_ru)
+async def on_clinic_addr_ru(m: Message, state: FSMContext):
+    await state.update_data(address_ru=(m.text or "").strip())
+    await _clinic_ask_addr_uz(m, state, await ui.resolve_lang(m.from_user))
+
+
+@router.callback_query(AddClinic.address_ru, F.data == "adm:clskip:addrru")
+async def cb_clinic_skip_addr_ru(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await _clinic_ask_addr_uz(cb.message, state, await ui.resolve_lang(cb.from_user))
+
+
+async def _clinic_ask_addr_uz(m: Message, state: FSMContext, lang: str):
+    await state.set_state(AddClinic.address_uz)
+    await m.answer(t(lang, "adm_clinic_ask_addr_uz"), reply_markup=kb.skip_kb(lang, "adm:clskip:addruz"))
+
+
+@router.message(AddClinic.address_uz)
+async def on_clinic_addr_uz(m: Message, state: FSMContext):
+    await state.update_data(address_uz=(m.text or "").strip())
+    await _clinic_ask_phone(m, state, await ui.resolve_lang(m.from_user))
+
+
+@router.callback_query(AddClinic.address_uz, F.data == "adm:clskip:addruz")
+async def cb_clinic_skip_addr_uz(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await _clinic_ask_phone(cb.message, state, await ui.resolve_lang(cb.from_user))
+
+
+async def _clinic_ask_phone(m: Message, state: FSMContext, lang: str):
+    await state.set_state(AddClinic.phone)
+    await m.answer(t(lang, "adm_clinic_ask_phone"), reply_markup=kb.skip_kb(lang, "adm:clskip:phone"))
+
+
+@router.message(AddClinic.phone)
+async def on_clinic_phone(m: Message, state: FSMContext):
+    await state.update_data(phone=(m.text or "").strip())
+    await _save_clinic(m, m.from_user, state)
+
+
+@router.callback_query(AddClinic.phone, F.data == "adm:clskip:phone")
+async def cb_clinic_skip_phone(cb: CallbackQuery, state: FSMContext):
+    await cb.answer()
+    await _save_clinic(cb.message, cb.from_user, state)
+
+
+async def _save_clinic(m: Message, user, state: FSMContext):
+    lang = await ui.resolve_lang(user)
+    d = await state.get_data()
+    await state.clear()
+    res = await api.clinic_create(
+        nameRu=d.get("name_ru") or None, nameUz=d.get("name_uz") or None,
+        addressRu=d.get("address_ru") or None, addressUz=d.get("address_uz") or None,
+        phone=d.get("phone") or None)
+    if not res:
+        await m.answer(t(lang, "api_error"))
+        return
+    shown = d.get("name_uz") if lang == "uz" else d.get("name_ru")
+    await m.answer(t(lang, "adm_clinic_added", name=shown or d.get("name_ru") or d.get("name_uz")),
                    reply_markup=kb.admin_menu_kb(lang))
 
 
