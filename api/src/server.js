@@ -6,18 +6,34 @@ import { config } from './config.js';
 import { pool, q } from './pool.js';
 import { matchSpecialty } from './matcher.js';
 import { chatReply, chatAvailable } from './chat.js';
-import { specialtyName } from './specialties.js';
+import { specialtyName, SPECIALTY_BY_CODE } from './specialties.js';
 
 export const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Express 4 не перехватывает отклонённые промисы в async-обработчиках: любая
+// неожиданная ошибка БД превращается в unhandledRejection и роняет ВЕСЬ сервис,
+// а не один запрос. Оборачиваем обработчики один раз здесь, вместо try/catch
+// в каждом из двух десятков маршрутов.
+for (const method of ['get', 'post', 'patch', 'put', 'delete']) {
+  const original = app[method].bind(app);
+  app[method] = (path, ...handlers) => original(path, ...handlers.map((h) =>
+    typeof h === 'function' && h.length < 4
+      ? (req, res, next) => Promise.resolve(h(req, res, next)).catch(next)
+      : h));
+}
+
 const DOCTOR_SELECT = `
   SELECT d.id, d.name, d.specialty, d.experience_years, d.price_uzs, d.rating::float AS rating,
+         d.phone AS doctor_phone, d.description, d.photo_id, d.is_active,
          c.id AS clinic_id, c.name AS clinic_name, c.address_ru, c.address_uz, c.phone,
          (SELECT min(s.datetime) FROM slots s WHERE s.doctor_id = d.id AND NOT s.is_booked AND s.datetime > now()) AS next_slot,
          (SELECT count(*) FROM slots s WHERE s.doctor_id = d.id AND NOT s.is_booked AND s.datetime > now()) AS free_slots
   FROM doctors d JOIN clinics c ON c.id = d.clinic_id`;
+
+// Patients must never see deactivated doctors; the clinic dashboard still does.
+const ACTIVE_ONLY = `d.is_active IS NOT FALSE`;
 
 function mapDoctor(r, lang = 'ru') {
   return {
@@ -28,6 +44,12 @@ function mapDoctor(r, lang = 'ru') {
     experienceYears: r.experience_years,
     priceUZS: r.price_uzs,
     rating: r.rating,
+    phone: r.doctor_phone || null,
+    description: r.description || null,
+    // photo_id is a Telegram file_id — useless in an <img>, so we hand the
+    // Mini App a proxy URL instead (see GET /api/doctors/:id/photo).
+    photoUrl: r.photo_id ? `/api/doctors/${r.id}/photo` : null,
+    isActive: r.is_active !== false,
     clinic: {
       id: r.clinic_id, name: r.clinic_name,
       address: lang === 'uz' ? r.address_uz : r.address_ru, phone: r.phone,
@@ -76,7 +98,7 @@ app.post('/api/match', async (req, res) => {
     `INSERT INTO match_events(tg_id, text, specialty, confidence, source, lang)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
     [tgId, String(text).slice(0, 500), result.specialty, result.confidence, result.source, lang]);
-  const { rows } = await q(`${DOCTOR_SELECT} WHERE d.specialty = $1 ORDER BY d.rating DESC`, [result.specialty]);
+  const { rows } = await q(`${DOCTOR_SELECT} WHERE d.specialty = $1 AND ${ACTIVE_ONLY} ORDER BY d.rating DESC`, [result.specialty]);
   res.json({ ...result, matchEventId: ev.rows[0].id, doctors: rows.map((r) => mapDoctor(r, lang)) });
 });
 
@@ -104,7 +126,7 @@ app.post('/api/chat', async (req, res) => {
     `INSERT INTO match_events(tg_id, text, specialty, confidence, source, lang)
      VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
     [tgId, String(firstUser).slice(0, 500), result.specialty, result.confidence, `chat-${result.source}`, lang]);
-  const { rows } = await q(`${DOCTOR_SELECT} WHERE d.specialty = $1 ORDER BY d.rating DESC`, [result.specialty]);
+  const { rows } = await q(`${DOCTOR_SELECT} WHERE d.specialty = $1 AND ${ACTIVE_ONLY} ORDER BY d.rating DESC`, [result.specialty]);
   res.json({ ...result, matchEventId: ev.rows[0].id, doctors: rows.map((r) => mapDoctor(r, lang)) });
 });
 
@@ -115,7 +137,7 @@ app.get('/api/doctors', async (req, res) => {
   const { specialty = null, clinicId = null, lang = 'ru' } = req.query;
   const { rows } = await q(
     `${DOCTOR_SELECT} WHERE ($1::text IS NULL OR d.specialty = $1)
-       AND ($2::int IS NULL OR d.clinic_id = $2) ORDER BY d.rating DESC`,
+       AND ($2::int IS NULL OR d.clinic_id = $2) AND ${ACTIVE_ONLY} ORDER BY d.rating DESC`,
     [specialty, clinicId ? Number(clinicId) : null]);
   res.json(rows.map((r) => mapDoctor(r, lang)));
 });
@@ -125,6 +147,68 @@ app.get('/api/doctors/:id/slots', async (req, res) => {
     `SELECT id, datetime FROM slots WHERE doctor_id = $1 AND NOT is_booked AND datetime > now() ORDER BY datetime`,
     [Number(req.params.id)]);
   res.json(rows.map((r) => ({ id: r.id, datetime: new Date(r.datetime).toISOString() })));
+});
+
+// Single doctor card — used by the bot's catalogue.
+app.get('/api/doctors/:id', async (req, res) => {
+  const { lang = 'ru' } = req.query;
+  const { rows } = await q(`${DOCTOR_SELECT} WHERE d.id = $1 AND ${ACTIVE_ONLY}`, [Number(req.params.id)]);
+  if (!rows.length) return res.status(404).json({ error: 'not_found' });
+  res.json(mapDoctor(rows[0], lang));
+});
+
+// Doctor photos are uploaded in the bot and stored as a Telegram file_id.
+// A browser cannot use a file_id, so we resolve it through the Telegram API and
+// stream the bytes back. Requires BOT_TOKEN to be set on the API service too.
+app.get('/api/doctors/:id/photo', async (req, res) => {
+  if (!config.botToken) return res.status(404).end();
+  const { rows } = await q('SELECT photo_id FROM doctors WHERE id = $1', [Number(req.params.id)]);
+  const fileId = rows[0]?.photo_id;
+  if (!fileId) return res.status(404).end();
+  try {
+    const meta = await fetch(`https://api.telegram.org/bot${config.botToken}/getFile?file_id=${encodeURIComponent(fileId)}`);
+    const info = await meta.json();
+    const filePath = info?.result?.file_path;
+    if (!filePath) return res.status(404).end();
+    const file = await fetch(`https://api.telegram.org/file/bot${config.botToken}/${filePath}`);
+    if (!file.ok) return res.status(404).end();
+    res.set('Content-Type', file.headers.get('content-type') || 'image/jpeg');
+    res.set('Cache-Control', 'public, max-age=86400');   // file_id is stable
+    res.send(Buffer.from(await file.arrayBuffer()));
+  } catch (e) {
+    console.error('photo proxy failed:', e.message);
+    res.status(502).end();
+  }
+});
+
+// ---------- patient profile (filled in via the bot) ----------
+app.get('/api/patients/:tgId', async (req, res) => {
+  const { rows } = await q(
+    `SELECT tg_id, name, full_name, phone, lang, age_group, region, is_registered
+     FROM patients WHERE tg_id = $1`, [String(req.params.tgId)]);
+  if (!rows.length) return res.json({ registered: false });
+  const p = rows[0];
+  res.json({
+    registered: p.is_registered === true,
+    tgId: p.tg_id, name: p.name, fullName: p.full_name, phone: p.phone,
+    lang: p.lang, ageGroup: p.age_group, region: p.region,
+  });
+});
+
+app.post('/api/patients/:tgId', async (req, res) => {
+  const { fullName = null, ageGroup = null, region = null, phone = null, lang = 'ru' } = req.body || {};
+  const { rows } = await q(
+    `INSERT INTO patients(tg_id, full_name, age_group, region, phone, lang, is_registered, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,TRUE,now())
+     ON CONFLICT (tg_id) DO UPDATE SET
+       full_name = COALESCE($2, patients.full_name),
+       age_group = COALESCE($3, patients.age_group),
+       region    = COALESCE($4, patients.region),
+       phone     = COALESCE($5, patients.phone),
+       lang      = $6, is_registered = TRUE, updated_at = now()
+     RETURNING full_name, age_group, region, phone`,
+    [String(req.params.tgId), fullName, ageGroup, region, phone, lang]);
+  res.json({ ok: true, profile: rows[0] });
 });
 
 app.post('/api/appointments', async (req, res) => {
@@ -221,6 +305,76 @@ app.get('/api/clinic/doctors', checkClinic, async (req, res) => {
   res.json(rows.map((r) => mapDoctor(r, lang)));
 });
 
+// ---------- doctor management (used by the bot's admin panel and the dashboard) ----------
+// Deactivated doctors are included here on purpose, so the admin can restore them.
+app.get('/api/clinic/doctors/all', checkClinic, async (req, res) => {
+  const clinicId = req.query.clinicId ? Number(req.query.clinicId) : null;
+  const lang = req.query.lang || 'ru';
+  const { rows } = await q(
+    `${DOCTOR_SELECT} WHERE ($1::int IS NULL OR d.clinic_id = $1) ORDER BY d.is_active DESC, d.name`,
+    [clinicId]);
+  res.json(rows.map((r) => mapDoctor(r, lang)));
+});
+
+app.post('/api/clinic/doctors', checkClinic, async (req, res) => {
+  const { clinicId, name, specialty, experienceYears = 0, priceUZS = 0,
+          rating = 0, phone = null, description = null, photoId = null } = req.body || {};
+  if (!name || !String(name).trim()) return res.status(400).json({ error: 'name_required' });
+  if (!SPECIALTY_BY_CODE[specialty]) return res.status(400).json({ error: 'bad_specialty' });
+  const cl = await q('SELECT id FROM clinics WHERE id = $1', [Number(clinicId)]);
+  if (!cl.rows.length) return res.status(400).json({ error: 'bad_clinic' });
+  const { rows } = await q(
+    `INSERT INTO doctors(clinic_id, name, specialty, experience_years, price_uzs, rating,
+                         phone, description, photo_id, is_active)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE) RETURNING id`,
+    [Number(clinicId), String(name).trim(), specialty, Number(experienceYears) || 0,
+     Number(priceUZS) || 0, Number(rating) || 0, phone, description, photoId]);
+  const full = await q(`${DOCTOR_SELECT} WHERE d.id = $1`, [rows[0].id]);
+  res.json({ ok: true, doctor: mapDoctor(full.rows[0], req.body.lang || 'ru') });
+});
+
+app.patch('/api/clinic/doctors/:id', checkClinic, async (req, res) => {
+  const id = Number(req.params.id);
+  const map = {
+    name: 'name', specialty: 'specialty', experienceYears: 'experience_years',
+    priceUZS: 'price_uzs', rating: 'rating', phone: 'phone',
+    description: 'description', photoId: 'photo_id', isActive: 'is_active',
+    clinicId: 'clinic_id',
+  };
+  const sets = []; const vals = [];
+  for (const [key, col] of Object.entries(map)) {
+    if (!(key in (req.body || {}))) continue;
+    if (key === 'specialty' && !SPECIALTY_BY_CODE[req.body.specialty]) {
+      return res.status(400).json({ error: 'bad_specialty' });
+    }
+    vals.push(req.body[key]);
+    sets.push(`${col} = $${vals.length}`);
+  }
+  if (!sets.length) return res.status(400).json({ error: 'nothing_to_update' });
+  vals.push(id);
+  const upd = await q(`UPDATE doctors SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING id`, vals);
+  if (!upd.rows.length) return res.status(404).json({ error: 'not_found' });
+  const full = await q(`${DOCTOR_SELECT} WHERE d.id = $1`, [id]);
+  res.json({ ok: true, doctor: mapDoctor(full.rows[0], req.body.lang || 'ru') });
+});
+
+// Soft delete: a hard DELETE would cascade away past appointments and break
+// both the patient's history and the clinic's statistics.
+app.delete('/api/clinic/doctors/:id', checkClinic, async (req, res) => {
+  const id = Number(req.params.id);
+  const upd = await q('UPDATE doctors SET is_active = FALSE WHERE id = $1 RETURNING id', [id]);
+  if (!upd.rows.length) return res.status(404).json({ error: 'not_found' });
+  // Убираем будущее свободное время, чтобы к скрытому врачу никто не записался.
+  // Слот, на который когда-то была запись (даже отменённая), удалять нельзя:
+  // на него ссылается appointments.slot_id, и удаление роняет запрос.
+  const freed = await q(
+    `DELETE FROM slots
+      WHERE doctor_id = $1 AND NOT is_booked AND datetime > now()
+        AND NOT EXISTS (SELECT 1 FROM appointments a WHERE a.slot_id = slots.id)
+      RETURNING id`, [id]);
+  res.json({ ok: true, freedSlots: freed.rowCount });
+});
+
 app.post('/api/clinic/slots', checkClinic, async (req, res) => {
   const { doctorId, datetime } = req.body || {};
   if (!doctorId || !datetime || isNaN(new Date(datetime))) return res.status(400).json({ error: 'bad_input' });
@@ -250,6 +404,15 @@ app.post('/api/clinic/appointments/:id/status', checkClinic, async (req, res) =>
 app.use('/app', express.static(path.join(config.paths.public, 'webapp')));
 app.use('/clinic', express.static(path.join(config.paths.public, 'dashboard')));
 app.get('/', (req, res) => res.redirect('/app'));
+
+// Последний рубеж: отвечаем 500 на один запрос и продолжаем работать.
+app.use((err, req, res, next) => {
+  console.error(`route error ${req.method} ${req.path}:`, err.message);
+  if (!res.headersSent) res.status(500).json({ error: 'server' });
+});
+
+// Сервис не должен умирать из-за фоновой ошибки (например, в прокси фото).
+process.on('unhandledRejection', (e) => console.error('unhandledRejection:', e?.message || e));
 
 const SCHEMA_CANDIDATES = [
   config.paths.schema,

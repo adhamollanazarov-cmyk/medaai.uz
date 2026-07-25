@@ -94,6 +94,14 @@ STR = {
 }
 
 
+# Строки интерфейса (меню, каталог, админка) лежат в отдельном модуле —
+# подмешиваем их сюда, чтобы t() оставался единой точкой доступа.
+from i18n_ui import UI as _UI  # noqa: E402
+
+for _lang, _vals in _UI.items():
+    STR.setdefault(_lang, {}).update(_vals)
+
+
 def t(lang: str, key: str, **kwargs) -> str:
     d = STR.get(lang, STR["ru"])
     s = d.get(key, STR["ru"].get(key, key))

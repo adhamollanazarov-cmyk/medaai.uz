@@ -63,16 +63,28 @@
   function haptic(type = 'light') { try { tg?.HapticFeedback?.impactOccurred(type); } catch {} }
   function toast(msg) { try { tg?.showAlert(msg); } catch { alert(msg); } }
 
+  // Фото врача загружает админ в боте; API отдаёт его по прокси-ссылке.
+  // Если фото нет или оно не загрузилось — остаются инициалы на цветном фоне.
+  function avatarHTML(d) {
+    if (d.photoUrl) {
+      return `<img class="avatar photo" src="${d.photoUrl}" alt="${escapeAttr(d.name)}"
+        onerror="this.replaceWith(Object.assign(document.createElement('div'),
+          {className:'avatar', style:'background:${avatarColor(d.name)}', textContent:'${initials(d.name)}'}))">`;
+    }
+    return `<div class="avatar" style="background:${avatarColor(d.name)}">${initials(d.name)}</div>`;
+  }
+
   // ---------- doctor card ----------
   function doctorCardHTML(d) {
     const t = T();
     return `<div class="card">
       <div class="doctor">
-        <div class="avatar" style="background:${avatarColor(d.name)}">${initials(d.name)}</div>
+        ${avatarHTML(d)}
         <div class="info">
           <div class="name">${d.name}</div>
           <div class="meta">${d.specialtyName} · ${d.experienceYears} ${t.years} · <span class="rating">★ ${d.rating}</span></div>
           <div class="clinic">🏥 ${d.clinic.name}</div>
+          ${d.description ? `<div class="muted">${escapeHtml(d.description)}</div>` : ''}
         </div>
       </div>
       <div class="row">
@@ -155,7 +167,7 @@
       <button class="btn ghost" id="back" style="text-align:left;padding:6px 0">← ${t.back}</button>
       <div class="card">
         <div class="doctor">
-          <div class="avatar" style="background:${avatarColor(d.name)}">${initials(d.name)}</div>
+          ${avatarHTML(d)}
           <div class="info">
             <div class="name">${d.name}</div>
             <div class="meta">${d.specialtyName} · <span class="rating">★ ${d.rating}</span></div>

@@ -24,3 +24,10 @@ MINIAPP_URL = (os.getenv("MINIAPP_URL", "") or "").rstrip("/")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://medauz:medauz@localhost:5432/medauz")
 ADMIN_IDS = _admin_ids(os.getenv("ADMIN_IDS", ""))
 DEFAULT_LANG = os.getenv("DEFAULT_LANG", "ru")
+
+# Адрес Node API. Бот ходит в него за врачами, слотами и бронями, чтобы не
+# дублировать бизнес-логику (транзакция брони живёт только в API).
+API_BASE = (os.getenv("API_BASE", "") or PUBLIC_URL or "http://localhost:3000").rstrip("/")
+
+# Тот же токен, что у кабинета клиники: им бот авторизует админские операции.
+CLINIC_TOKEN = os.getenv("CLINIC_DASHBOARD_TOKEN", "clinic-demo-2026")

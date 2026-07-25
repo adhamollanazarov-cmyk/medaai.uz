@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message, CallbackQuery, BotCommand,
     InlineKeyboardMarkup, InlineKeyboardButton,
@@ -17,6 +18,12 @@ from i18n import t
 import db
 import analytics
 import ai
+import ui
+import api_client as api
+import handlers_profile
+import handlers_catalog
+import handlers_admin
+from handlers_profile import start_registration
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("medauz-bot")
@@ -24,22 +31,17 @@ log = logging.getLogger("medauz-bot")
 dp = Dispatcher()
 TASHKENT = timezone(timedelta(hours=5))
 
+# Порядок важен: специфичные роутеры идут раньше общего обработчика текста
+# в этом модуле, иначе он перехватит ввод внутри FSM-диалогов.
+dp.include_router(handlers_profile.router)
+dp.include_router(handlers_catalog.router)
+dp.include_router(handlers_admin.router)
+
 
 # ---------- helpers ----------
-async def resolve_lang(user) -> str:
-    lang = await db.get_lang(user.id)
-    if lang:
-        return lang
-    code = (getattr(user, "language_code", "") or "")
-    return "uz" if code.startswith("uz") else config.DEFAULT_LANG
-
-
-def miniapp_url(lang: str):
-    base = config.MINIAPP_URL or (f"{config.PUBLIC_URL}/app" if config.PUBLIC_URL else "")
-    if not base:
-        return None
-    sep = "&" if "?" in base else "?"
-    return f"{base}{sep}lang={lang}"
+# resolve_lang / miniapp_url живут в ui.py — они нужны и роутерам тоже.
+resolve_lang = ui.resolve_lang
+miniapp_url = ui.miniapp_url
 
 
 def app_kb(lang: str):
@@ -70,16 +72,43 @@ def name_suffix(user) -> str:
 
 # ---------- handlers ----------
 @dp.message(CommandStart())
-async def on_start(m: Message):
+async def on_start(m: Message, state: FSMContext):
     lang = await resolve_lang(m.from_user)
+    await state.clear()
     await db.ensure_patient(m.from_user.id, lang)
-    text = t(lang, "welcome", name=name_suffix(m.from_user))
-    kb = app_kb(lang)
-    if kb:
-        await set_menu(m.bot, m.chat.id, lang)
-        await m.answer(text, reply_markup=kb)
-    else:
-        await m.answer(text + "\n\n" + t(lang, "no_public_url"))
+    await set_menu(m.bot, m.chat.id, lang)
+    await m.answer(t(lang, "welcome", name=name_suffix(m.from_user)))
+
+    # Новому пациенту сразу предлагаем анкету — потом запись займёт два нажатия.
+    profile = await api.profile_get(m.from_user.id)
+    if not (profile or {}).get("registered"):
+        await start_registration(m, state, lang)
+        return
+    await ui.show_menu(m, lang)
+
+
+@dp.message(Command("menu"))
+async def on_menu(m: Message, state: FSMContext):
+    lang = await resolve_lang(m.from_user)
+    await state.clear()
+    await ui.show_menu(m, lang)
+
+
+@dp.callback_query(F.data == "nav:menu")
+async def cb_menu(cq: CallbackQuery, state: FSMContext):
+    lang = await resolve_lang(cq.from_user)
+    await state.clear()
+    await cq.answer()
+    await ui.show_menu(cq, lang, edit=True)
+
+
+@dp.callback_query(F.data == "chat:start")
+async def cb_chat(cq: CallbackQuery, state: FSMContext):
+    lang = await resolve_lang(cq.from_user)
+    await state.clear()
+    ai.start(cq.from_user.id)
+    await cq.answer()
+    await cq.message.answer(t(lang, "chat_start"))
 
 
 @dp.message(Command("lang"))
@@ -145,8 +174,8 @@ def _fmt_money(n) -> str:
 
 
 async def _send_chat_result(m: Message, lang: str, data: dict):
-    """Show the recommendation + matching doctors, then hand off to the Mini App
-    for slot selection (booking lives there, not in chat)."""
+    """Показать рекомендацию и подходящих врачей. Кнопки ведут в ту же карточку
+    врача, что и каталог, — оттуда работает обычная запись на приём."""
     await m.answer(t(lang, "chat_result", specialty=data.get("name") or ""))
     doctors = data.get("doctors") or []
     if not doctors:
@@ -159,8 +188,11 @@ async def _send_chat_result(m: Message, lang: str, data: dict):
           clinic=(d.get("clinic") or {}).get("name", ""))
         for d in doctors[:5]
     ]
-    kb = app_kb(lang)
-    await m.answer("\n\n".join(lines) + "\n\n" + t(lang, "chat_book_hint"), reply_markup=kb)
+    rows = [[InlineKeyboardButton(text=f"📅 {d['name']}", callback_data=f"cat:doc:{d['id']}")]
+            for d in doctors[:5]]
+    rows.append([InlineKeyboardButton(text=t(lang, "btn_menu"), callback_data="nav:menu")])
+    await m.answer("\n\n".join(lines) + "\n\n" + t(lang, "chat_book_hint"),
+                   reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 @dp.message(F.text & ~F.text.startswith("/"))
@@ -181,13 +213,9 @@ async def on_text(m: Message):
             await _send_chat_result(m, lang, data)
         return
 
-    # Otherwise keep the original behaviour — open the Mini App — and mention /chat.
-    kb = app_kb(lang)
-    if kb:
-        await m.answer(t(lang, "welcome", name=name_suffix(m.from_user)) + "\n\n"
-                       + t(lang, "chat_hint"), reply_markup=kb)
-    else:
-        await m.answer(t(lang, "no_public_url"))
+    # Вне консультации — просто показываем меню и подсказываем про /chat.
+    await m.answer(t(lang, "chat_hint"))
+    await ui.show_menu(m, lang)
 
 
 # ---------- reminders ----------
@@ -213,6 +241,7 @@ async def reminders_loop(bot: Bot):
 async def on_startup(bot: Bot):
     await bot.set_my_commands([
         BotCommand(command="start", description="Открыть meda.ai / meda.ai ochish"),
+        BotCommand(command="menu", description="Меню / Menyu"),
         BotCommand(command="chat", description="AI-консультация / AI-konsultatsiya"),
         BotCommand(command="stop", description="Завершить консультацию / Konsultatsiyani yakunlash"),
         BotCommand(command="lang", description="Сменить язык / Tilni oʻzgartirish"),

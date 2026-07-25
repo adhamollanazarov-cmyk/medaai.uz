@@ -76,3 +76,23 @@ CREATE INDEX IF NOT EXISTS idx_appt_created ON appointments(created_at);
 CREATE INDEX IF NOT EXISTS idx_appt_dt      ON appointments(datetime);
 CREATE INDEX IF NOT EXISTS idx_slots_doc    ON slots(doctor_id, is_booked);
 CREATE INDEX IF NOT EXISTS idx_match_created ON match_events(created_at);
+
+-- ===== v3: доктор-карточка и профиль пациента =====
+-- Добавлено при слиянии со старым ботом: телефон/описание/фото врача и
+-- анкета пациента. ADD COLUMN IF NOT EXISTS — безопасно на боевой базе,
+-- существующие данные не затрагиваются.
+
+ALTER TABLE doctors  ADD COLUMN IF NOT EXISTS phone       TEXT;
+ALTER TABLE doctors  ADD COLUMN IF NOT EXISTS description TEXT;
+-- Telegram file_id: врач добавляется фото прямо в боте.
+-- Mini App получает картинку через прокси GET /api/doctors/:id/photo.
+ALTER TABLE doctors  ADD COLUMN IF NOT EXISTS photo_id    TEXT;
+-- Врача не удаляют физически (иначе осыпятся прошлые записи) — деактивируют.
+ALTER TABLE doctors  ADD COLUMN IF NOT EXISTS is_active   BOOLEAN DEFAULT TRUE;
+
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS full_name     TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS age_group     TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS region        TEXT;
+ALTER TABLE patients ADD COLUMN IF NOT EXISTS is_registered BOOLEAN DEFAULT FALSE;
+
+CREATE INDEX IF NOT EXISTS idx_doctors_active ON doctors(is_active, specialty);

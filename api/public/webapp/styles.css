@@ -115,3 +115,6 @@ input:focus { border-color: var(--accent); }
 .chat-input { display: flex; gap: 8px; align-items: flex-end; }
 .chat-input textarea { flex: 1; margin: 0; resize: none; }
 .chat-input .btn { width: auto; padding: 12px 18px; }
+
+/* фото врача вместо инициалов */
+.avatar.photo { object-fit: cover; padding: 0; }
